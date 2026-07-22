@@ -1,4 +1,4 @@
-# Bay Homunculus
+# Real-time travel in the bay
 
 **The Bay Area redrawn so that distance means travel time.**
 
@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT">
 </p>
 
-**[Live map](https://maninae.github.io/bay-homunculus/)** | **[Data sources](docs/DATA_SOURCES.md)**
+**[Live map](https://maninae.github.io/real-time-travel-in-the-bay/)** | **[Data sources](docs/DATA_SOURCES.md)**
 
 ---
 

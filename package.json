@@ -1,5 +1,5 @@
 {
-  "name": "bay-homunculus",
+  "name": "real-time-travel-in-the-bay",
   "version": "1.0.0",
   "description": "The Bay Area redrawn so that distance means travel time.",
   "directories": {
@@ -17,16 +17,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Maninae/bay-homunculus.git"
+    "url": "git+https://github.com/Maninae/real-time-travel-in-the-bay.git"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/Maninae/bay-homunculus/issues"
+    "url": "https://github.com/Maninae/real-time-travel-in-the-bay/issues"
   },
-  "homepage": "https://github.com/Maninae/bay-homunculus#readme",
+  "homepage": "https://github.com/Maninae/real-time-travel-in-the-bay#readme",
   "devDependencies": {
     "@types/node": "^26.1.1",
     "tsx": "^4.23.1",

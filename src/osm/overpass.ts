@@ -18,7 +18,7 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
 ];
-const USER_AGENT = "bay-homunculus/0.1 (https://github.com/Maninae/bay-homunculus)";
+const USER_AGENT = "real-time-travel-in-the-bay/0.1 (https://github.com/Maninae/real-time-travel-in-the-bay)";
 const REQUEST_GAP_MS = 6000;
 const MAX_RETRIES = 6;
 

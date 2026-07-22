@@ -1,4 +1,4 @@
-# bay-homunculus
+# real-time-travel-in-the-bay
 
 A time-space cartogram of the SF Bay Area: the map redrawn so pairwise distances match travel times. TypeScript pipeline, static viewer on GitHub Pages.
 
