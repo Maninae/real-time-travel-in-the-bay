@@ -5,19 +5,19 @@ A time-space cartogram of the SF Bay Area: the map redrawn so pairwise distances
 ## Locked decisions
 
 - **Language**: TypeScript end to end, run via `npx tsx`. Algorithms (Dijkstra, MDS, SMACOF, Procrustes) are hand-rolled with typed arrays; no runtime dependencies, devDeps only.
-- **v1 region scope**: SF + Peninsula down to Palo Alto + East Bay from Richmond to Hayward. Grid stays near 1,000 anchors because the all-pairs matrix grows as N².
+- **v1 region scope**: SF + Peninsula down to Palo Alto + East Bay from Richmond to Hayward + southern Marin to San Rafael (the bbox rectangle includes it, and it makes the Golden Gate and Richmond bridges meaningful instead of dead ends). Grid stays near 1,000 anchors because the all-pairs matrix grows as N².
 - **v1 traffic**: modeled congestion profiles (no API key). The TomTom provider activates when a key lands in `.env`. Transit waits for a 511.org key.
 
 ## Architecture
 
-Pipeline stages under `scripts/`, numbered in execution order, each writing JSON to `data/` for the next stage. Core algorithms live in `src/` as pure modules the scripts orchestrate. The viewer in `site/` is a static page consuming one bundled JSON.
+Pipeline stages under `scripts/`, numbered in execution order, each writing JSON to `data/` for the next stage (`npm run pipeline` runs them all). Core algorithms live in `src/` as pure modules the scripts orchestrate. The viewer in `docs/` is a static page consuming one bundled JSON, served by GitHub Pages.
 
-1. Hex grid over the region bounding box; anchors keep only points near the drivable graph (no water polygons needed: the bay has no roads, so road-proximity IS the land mask)
-2. Street network via tiled Overpass queries, cached raw in `data/cache/` (gitignored)
-3. Graph build: parse ways to directed edges, largest strongly connected component, degree-2 chain contraction for routing speed (full geometry kept for rendering)
-4. All-pairs anchor times: binary-heap Dijkstra per anchor per scenario, symmetrized by averaging A to B with B to A
+1. Street network via tiled Overpass queries (mirror rotation + retry), cached raw in `data/cache/` (gitignored)
+2. Graph build: junction detection, degree-2 chain contraction into weighted edges, largest strongly connected component
+3. Hex anchor grid; a lattice point survives only if a graph junction sits within 500 m (no water polygons needed: the bay has no roads, so road proximity IS the land mask)
+4. All-pairs anchor times: early-exit binary-heap Dijkstra per anchor per scenario, symmetrized by averaging A to B with B to A
 5. Embedding: classical MDS init, SMACOF refinement, Procrustes alignment back to geographic orientation, per-anchor stress
-6. Viewer bundle: anchors (geo + per-mode time-space positions), simplified major-road geometry with precomputed warp weights, sample trips
+6. Viewer bundle to `docs/data/bundle.json`: anchors, per-mode time-space layouts, simplified secondary-and-up street geometry, sample trips with routed paths (the browser computes vertex warp weights itself at load)
 
 ## Data sources
 
