@@ -181,35 +181,24 @@ const CORRIDOR_OVERRIDES: CorridorOverride[] = [
   },
 ];
 
-/**
- * Dense-SF-core surface-street uplift. Applied on top of class-base for surface
- * classes whose representative point falls inside the SF-core bbox (roughly
- * Van Ness to the Embarcadero, Mission to North Beach). The neighborhoods here
- * -- SoMa, Chinatown, North Beach, Financial District -- have signal density,
- * curb-lane friction, unprotected-turn friction, and pedestrian volume that
- * ordinary residential blocks in the Sunset or Peninsula suburbia do not.
- *
- * The bbox is intentionally narrow (SF-core proper, ~4 km on a side) so it
- * does not flatten the SF-vs-suburbs contrast.
- */
-const SF_CORE_BBOX = { south: 37.775, west: -122.44, north: 37.81, east: -122.395 };
-const SF_CORE_SURFACE_CLASSES = new Set([
-  "primary", "primary_link",
-  "secondary", "secondary_link",
-  "tertiary", "tertiary_link",
-  "unclassified", "residential",
-]);
-const SF_CORE_UPLIFT_BY_SCENARIO: Partial<Record<ScenarioKey, number>> = {
-  midday: 1.5,   // dense signal + curb-lane friction, tourism traffic
-  friday: 1.6,   // same but with commuter compounding
-};
-
 function wayInsideBbox(way: TrafficWayInfo, bbox: NonNullable<CorridorOverride["bbox"]>): boolean {
   if (way.lat === undefined || way.lon === undefined) return false;
   return way.lat >= bbox.south && way.lat <= bbox.north && way.lon >= bbox.west && way.lon <= bbox.east;
 }
 
-/** Congestion multiplier for one way in one scenario (>= 1.0, capped). */
+/**
+ * Congestion multiplier for one way in one scenario (>= 1.0, capped).
+ *
+ * Design note: an earlier revision layered a hand-drawn "dense-SF core" bbox
+ * uplift (+50/60% on SF surface classes) on top of this. Removed after the
+ * 2026-09-10 review: it did not generalize (it applied only to SF, not to
+ * downtown Oakland or Berkeley), it was mildly circular with the North-Beach
+ * ratio-check trip that lives inside it, and the model overshot the
+ * ground-truth 9 mph North Beach speed *because* of it. The intersection-
+ * penalty mechanism plus rebalanced class base multipliers generalize
+ * naturally (dense grid = short contracted edges = more per-mile signal
+ * delay), and the SF balloon they produce is ~90% of the total.
+ */
 export function congestionMultiplier(way: TrafficWayInfo, scenario: ScenarioKey): number {
   const baseTable = BASE_MULTIPLIER_BY_CLASS_AND_SCENARIO[scenario];
   let multiplier = baseTable[way.cls] ?? 1.05;
@@ -220,10 +209,6 @@ export function congestionMultiplier(way: TrafficWayInfo, scenario: ScenarioKey)
     if (corridorMultiplier <= multiplier) continue;
     if (corridor.bbox && !wayInsideBbox(way, corridor.bbox)) continue;
     if (corridor.pattern.test(matchText)) multiplier = corridorMultiplier;
-  }
-  const coreUplift = SF_CORE_UPLIFT_BY_SCENARIO[scenario];
-  if (coreUplift !== undefined && SF_CORE_SURFACE_CLASSES.has(way.cls) && wayInsideBbox(way, SF_CORE_BBOX)) {
-    if (coreUplift > multiplier) multiplier = coreUplift;
   }
   return Math.min(multiplier, CONGESTION_MULTIPLIER_CAP);
 }

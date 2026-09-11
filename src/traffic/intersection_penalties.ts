@@ -1,6 +1,6 @@
 /**
  * Per-intersection + per-turn delay model for contracted junction-to-junction
- * edges.
+ * edges, plus per-crossing lump-sum delay for the five named Bay bridges.
  *
  * Motivation. The v1 edge weight was purely `length / speed`, which means SF
  * routed at ~20 mph free-flow -- a fantasy: TomTom measures SF average speed
@@ -83,101 +83,207 @@ export function intersectionPenaltySeconds(highwayClass: string, scenario: Scena
 }
 
 // ---------------------------------------------------------------------------
-// Bridge / toll-plaza / metering-light lump-sum delays.
+// Bridge / toll-plaza / metering-light lump-sum delay per crossing.
 //
-// A per-edge multiplier already stretches the on-bridge drive time (see the
-// corridor overrides in modeled_profile.ts). What multipliers cannot model is
-// the queue AT the bridge -- the WB Bay Bridge metering-light backup, the
-// approach-lane merge -- which is a lump-sum delay that lives on the entrance,
-// not the deck. We add it per-edge on the bridge deck and let it apply to
-// every crossing that traverses one of the deck's contracted edges. Order of
-// magnitude of a "typical" bridge:
+// A per-edge class multiplier already stretches the on-bridge drive time (see
+// the corridor overrides in modeled_profile.ts). What multipliers cannot model
+// is the queue AT the bridge: the WB Bay Bridge metering-light backup, the
+// Golden Gate southbound-toll gantry approach, the Richmond-San Rafael tie-up.
+// Those are lump sums, not proportional to deck length.
 //
-//   * SF-Oakland Bay Bridge WB (into SF), Friday PM peak: 10-15 min metering
-//     backup (511.org caltrans real-time traffic; Google Maps typical times).
-//   * Golden Gate SB, Friday PM: 5-8 min at the toll gantry approach.
-//   * Richmond-San Rafael WB: 5-10 min bridge queue.
-//   * San Mateo, Dumbarton: smaller queues, ~3-6 min typical.
+// The mechanism:
 //
-// At midday: 2-4 min typical bridge delay.
-// At free flow: 0 (idealized empty roads).
+//   1. Each bridge is identified by a TIGHT bbox around the actual deck (not
+//      approaches) plus the OSM `bridge:true` tag on the way, and optionally
+//      a `ref` filter. This avoids two v1 bugs the audit caught: (a) the loose
+//      Bay-Bridge bbox that leaked onto ~9 miles of I-80 approach and East
+//      Bay non-crossing trips, and (b) the name-regex matcher missing bridges
+//      whose OSM deck ways are unnamed (Golden Gate, Dumbarton, San Mateo).
 //
-// We express the delay as SECONDS per contracted-edge traversal, calibrated
-// against a rough estimate of the number of contracted edges on each named
-// bridge; the total per-crossing penalty ends up close to the measured
-// backup even if the deck's segment count wobbles a bit.
-// ---------------------------------------------------------------------------
+//   2. At weight-computation time we build a per-scenario Float64Array of
+//      per-edge additive seconds. For each bridge we count the matched deck
+//      edges N and set per-edge = 2 * lumpSum / N. A full crossing traverses
+//      one direction's edges (~N/2), so total added time per crossing lands
+//      at `lumpSum`. Non-crossing trips traverse zero deck edges and pay zero.
+//
+// Real-world calibration (Google Maps typical times, primary-source cited in
+// each bridge entry below):
 
-interface BridgeDelayProfile {
-  pattern: RegExp;
+interface BridgeCrossing {
+  key: string;
   label: string;
-  /** Delay seconds per contracted edge on this bridge, per scenario. */
-  perEdgeSecondsByScenario: Record<ScenarioKey, number>;
-  /** If set, only ways whose representative point is inside this bbox match. */
-  bbox?: { south: number; west: number; north: number; east: number };
+  /**
+   * Deck matcher. An edge is a "deck edge" of this bridge iff its parent way
+   * has bridge:true AND (a) its representative point falls inside `bbox`,
+   * AND (b) either the way's `name` matches `nameMatch` when set, or the
+   * way's `ref` matches `refFilter` when set (bbox alone is used if both
+   * are null). Four of the five Bay crossings have unique names on their
+   * deck ways (Golden Gate Bridge, Richmond-San Rafael Bridge, San Mateo -
+   * Hayward Bridge, Dumbarton Bridge). Only the SF-Oakland Bay Bridge is
+   * name-less in OSM (deck ways are "Route 80" / "Dwight D. Eisenhower
+   * Highway"), so it uses bbox + I-80 ref.
+   */
+  bbox: { south: number; west: number; north: number; east: number };
+  nameMatch?: RegExp;
+  refFilter?: RegExp;
+  /** Total additive seconds per crossing, per scenario. Free-flow is always 0. */
+  lumpSumSecondsByScenario: Record<ScenarioKey, number>;
+  /** Source note that ends up in the code so calibration is auditable. */
+  source: string;
 }
 
-/**
- * Named-bridge delay profiles. Patterns run against "ref name". The Bay
- * Bridge is name-less in OSM (its ways carry ref "I 80" plus corridor names
- * "Route 80" / "Dwight D. Eisenhower Highway"), so it needs a bbox gate to
- * distinguish it from the rest of I-80.
- */
-const BRIDGE_DELAY_PROFILES: BridgeDelayProfile[] = [
+const BRIDGE_CROSSINGS: BridgeCrossing[] = [
   {
-    pattern: /\bI 80\b/,
+    key: "bay",
     label: "SF-Oakland Bay Bridge",
-    bbox: { south: 37.78, west: -122.41, north: 37.84, east: -122.28 },
-    perEdgeSecondsByScenario: { freeflow: 0, midday: 30, friday: 90 },
+    // Tight deck: SF landing (Fremont/Rincon) to Oakland landing (Bay Bridge
+    // toll plaza). YBI tunnel included. Excludes MacArthur Maze / I-80
+    // through-corridor and downtown-SF I-80 approach.
+    bbox: { south: 37.788, west: -122.395, north: 37.826, east: -122.298 },
+    refFilter: /\bI 80\b/,
+    // Peak WB PM metering + queue routinely runs 10-15 min at 5 pm; midday
+    // adds ~3-5 min for the toll plaza approach; free-flow is negligible.
+    lumpSumSecondsByScenario: { freeflow: 0, midday: 240, friday: 900 },
+    source: "Google Maps typical times WB SF-Oakland Bay Bridge PM peak (10-15 min queue); MTC bridge congestion reports.",
   },
   {
-    pattern: /Golden Gate Bridge/i,
+    key: "goldenGate",
     label: "Golden Gate Bridge",
-    perEdgeSecondsByScenario: { freeflow: 0, midday: 20, friday: 60 },
+    // Wide enough to admit the whole named deck (Presidio to Vista Point).
+    bbox: { south: 37.800, west: -122.485, north: 37.835, east: -122.470 },
+    nameMatch: /Golden Gate Bridge/i,
+    lumpSumSecondsByScenario: { freeflow: 0, midday: 120, friday: 360 },
+    source: "Google Maps typical times SB Golden Gate PM peak (5-8 min); GGB district travel-time reports.",
   },
   {
-    pattern: /San Rafael Bridge|Richmond.{0,3}San Rafael/i,
+    key: "richmondSanRafael",
     label: "Richmond-San Rafael Bridge",
-    perEdgeSecondsByScenario: { freeflow: 0, midday: 20, friday: 60 },
+    bbox: { south: 37.925, west: -122.505, north: 37.945, east: -122.395 },
+    nameMatch: /Richmond.{0,4}San Rafael Bridge/i,
+    lumpSumSecondsByScenario: { freeflow: 0, midday: 120, friday: 360 },
+    source: "Google Maps typical times WB Richmond-San Rafael PM peak (5-10 min queue).",
   },
   {
-    pattern: /San Mateo.{0,3}Hayward Bridge|San Mateo Bridge/i,
+    key: "sanMateoHayward",
     label: "San Mateo-Hayward Bridge",
-    perEdgeSecondsByScenario: { freeflow: 0, midday: 15, friday: 45 },
+    // Widen south to 37.570 so both direction edges (37.5729 WB, 37.6169 EB)
+    // are inside; earlier 37.583 excluded WB and delivered only half the
+    // intended crossing delay.
+    bbox: { south: 37.570, west: -122.267, north: 37.640, east: -122.118 },
+    nameMatch: /San Mateo.{0,4}Hayward Bridge/i,
+    lumpSumSecondsByScenario: { freeflow: 0, midday: 120, friday: 240 },
+    source: "Google Maps typical times CA-92 San Mateo Bridge EB PM peak (~4 min added).",
   },
   {
-    pattern: /Dumbarton Bridge/i,
+    key: "dumbarton",
     label: "Dumbarton Bridge",
-    perEdgeSecondsByScenario: { freeflow: 0, midday: 15, friday: 40 },
+    // Widen south to 37.495 so the westernmost direction edge (37.4979) is
+    // inside.
+    bbox: { south: 37.495, west: -122.150, north: 37.517, east: -122.083 },
+    nameMatch: /Dumbarton Bridge/i,
+    lumpSumSecondsByScenario: { freeflow: 0, midday: 120, friday: 300 },
+    source: "Google Maps typical times CA-84 Dumbarton EB PM peak (~5 min added).",
   },
 ];
 
-export interface BridgeMatchInfo {
-  name?: string;
-  ref?: string;
-  lat?: number;
-  lon?: number;
+export interface BridgeEdgeGraph {
+  edgeWay: number[];
+  ways: { cls: string; bridge: boolean; lat?: number; lon?: number; name?: string; ref?: string }[];
 }
 
-function wayInsideBbox(
-  way: BridgeMatchInfo,
-  bbox: NonNullable<BridgeDelayProfile["bbox"]>,
+function wayInsideBridgeBbox(
+  lat: number | undefined,
+  lon: number | undefined,
+  bbox: BridgeCrossing["bbox"],
 ): boolean {
-  if (way.lat === undefined || way.lon === undefined) return false;
-  return way.lat >= bbox.south && way.lat <= bbox.north && way.lon >= bbox.west && way.lon <= bbox.east;
+  if (lat === undefined || lon === undefined) return false;
+  return lat >= bbox.south && lat <= bbox.north && lon >= bbox.west && lon <= bbox.east;
 }
 
 /**
- * Additive per-edge bridge/toll delay (seconds) for a way in a scenario.
- * Zero for ways that are not one of the named crossings above.
+ * Precompute per-edge additive bridge/toll-plaza delay (seconds) for one
+ * scenario. For each named bridge we count the deck edges N in the extract
+ * and set per-edge = 2 * lumpSum / N, so a full crossing (one direction,
+ * ~N/2 edges) accumulates ~lumpSum seconds total, independent of how the
+ * graph builder chose to contract the deck. Non-crossing edges get 0.
+ *
+ * Returns a Float64Array parallel to graph.edgeWay.
  */
-export function bridgeCrossingPenaltySeconds(way: BridgeMatchInfo, scenario: ScenarioKey): number {
-  const matchText = `${way.ref ?? ""} ${way.name ?? ""}`;
-  for (const profile of BRIDGE_DELAY_PROFILES) {
-    if (profile.bbox && !wayInsideBbox(way, profile.bbox)) continue;
-    if (profile.pattern.test(matchText)) {
-      return profile.perEdgeSecondsByScenario[scenario];
-    }
+function edgeMatchesBridge(
+  way: BridgeEdgeGraph["ways"][number],
+  bridge: BridgeCrossing,
+): boolean {
+  if (!way.bridge) return false;
+  if (!wayInsideBridgeBbox(way.lat, way.lon, bridge.bbox)) return false;
+  if (bridge.nameMatch) {
+    if (!way.name || !bridge.nameMatch.test(way.name)) return false;
+  } else if (bridge.refFilter) {
+    if (!way.ref || !bridge.refFilter.test(way.ref)) return false;
   }
-  return 0;
+  return true;
+}
+
+export function buildBridgePenaltyEdgeSeconds(
+  graph: BridgeEdgeGraph,
+  scenario: ScenarioKey,
+): Float64Array {
+  const perEdge = new Float64Array(graph.edgeWay.length);
+
+  for (const bridge of BRIDGE_CROSSINGS) {
+    const lumpSum = bridge.lumpSumSecondsByScenario[scenario];
+    if (lumpSum <= 0) continue;
+
+    // Pass 1: enumerate the matched deck edges.
+    const matchedEdges: number[] = [];
+    for (let e = 0; e < graph.edgeWay.length; e++) {
+      if (edgeMatchesBridge(graph.ways[graph.edgeWay[e]], bridge)) matchedEdges.push(e);
+    }
+    if (matchedEdges.length === 0) continue;
+
+    // Pass 2: apply the normalized per-edge penalty. Factor of 2 because a
+    // one-direction crossing traverses ~half the total (bidirectional) edges;
+    // for oneway=1 divided-highway bridges the two carriageways still each
+    // supply their own set of edges to `matchedEdges`, so this still holds.
+    const perEdgeSeconds = (2 * lumpSum) / matchedEdges.length;
+    for (const e of matchedEdges) perEdge[e] += perEdgeSeconds;
+  }
+
+  return perEdge;
+}
+
+/**
+ * Diagnostic helper: returns per-bridge match counts + per-crossing delivered
+ * delay for auditing. Not on the hot path; called from scripts and validation.
+ */
+export function describeBridgeMatches(
+  graph: BridgeEdgeGraph,
+  scenario: ScenarioKey = "friday",
+): Array<{
+  key: string;
+  label: string;
+  matchedEdges: number;
+  perCrossingSeconds: number;
+  intendedLumpSumSeconds: number;
+  source: string;
+}> {
+  const out = [];
+  for (const bridge of BRIDGE_CROSSINGS) {
+    let count = 0;
+    for (let e = 0; e < graph.edgeWay.length; e++) {
+      if (edgeMatchesBridge(graph.ways[graph.edgeWay[e]], bridge)) count++;
+    }
+    const lumpSum = bridge.lumpSumSecondsByScenario[scenario];
+    out.push({
+      key: bridge.key,
+      label: bridge.label,
+      matchedEdges: count,
+      // Under the 2*lumpSum/N formula, a one-direction crossing traverses N/2
+      // edges and thus accumulates exactly lumpSum. Left here explicitly for
+      // audit clarity when diagnosing miscalibrations.
+      perCrossingSeconds: count > 0 ? lumpSum : 0,
+      intendedLumpSumSeconds: lumpSum,
+      source: bridge.source,
+    });
+  }
+  return out;
 }

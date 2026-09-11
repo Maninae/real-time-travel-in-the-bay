@@ -175,7 +175,16 @@ const RATIO_CHECKS: RatioCheck[] = [
     scenario: "midday",
     numerator: { from: 0, to: 0 },   // North Beach short drive: 1.5 mi
     denominator: { from: 1, to: 1 }, // San Mateo -> Daly City: ~11 mi US-101
-    expected: { min: 2.5, max: 6.0 },
+    // Tightened from the initial 2.5-6.0x regression guard. The honest
+    // (bbox-free, principled) model lands at ~3.56x, and the ground-truth
+    // observation is ~4x. A 3.0-5.0x window is meaningful accuracy: it
+    // rejects models that flatten SF back to the v1 1.5x band, and it
+    // rejects models that overshoot (e.g. by re-adding the removed dense-SF
+    // hand-drawn uplift). Denominator note: the SM->DC corridor is ~46%
+    // slow in the model (see build notes finding #3), which biases this
+    // ratio downward -- if the corridor is fixed, expect this to migrate
+    // toward 4.5-5x.
+    expected: { min: 3.0, max: 5.0 },
     source: "Measured ground truth: SF surface ~4-4.5x freeway per mile at midday.",
   },
 ];
