@@ -13,7 +13,8 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { buildWeightedCsr, dijkstraSeconds } from "../src/graph/dijkstra.ts";
-import { computeScenarioWeightsSeconds, type ScenarioKey } from "../src/traffic/scenario_weights.ts";
+import { computeScenarioWeightsSeconds } from "../src/traffic/scenario_weights.ts";
+import { SCENARIO_KEYS } from "../src/traffic/scenarios.ts";
 
 interface GraphFile {
   nodeLat: number[]; nodeLon: number[];
@@ -31,8 +32,7 @@ function main(): void {
   const edgeFrom = Int32Array.from(graph.edgeFrom);
   const edgeTo = Int32Array.from(graph.edgeTo);
 
-  const scenarioKeys: ScenarioKey[] = ["freeflow", "friday"];
-  for (const scenarioKey of scenarioKeys) {
+  for (const scenarioKey of SCENARIO_KEYS) {
     const weights = computeScenarioWeightsSeconds(graph, scenarioKey);
     const csr = buildWeightedCsr(nodeCount, edgeFrom, edgeTo, weights);
 

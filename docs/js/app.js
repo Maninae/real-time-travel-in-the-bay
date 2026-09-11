@@ -1,4 +1,12 @@
 // Entry point: load bundle, precompute displacements, wire UI, run the render loop.
+//
+// Modes: the bundle ships N scenarios (v2: freeflow, midday, friday), each
+// with its own layout. At any moment we are animating between exactly two of
+// them -- `fromMode` and `toMode`, crossfaded by `modeBlend` in [0, 1]. When
+// a click switches modes we set fromMode := previous target, toMode := new
+// target, kick blend back to 0, and let the tween run. When the tween ends
+// we collapse fromMode := toMode so a subsequent switch tweens cleanly from
+// whichever mode the user was on.
 
 import { precomputeDisplacements, makeProjection } from './warp.js';
 import { renderFrame, groupStreetsByClass, MAP_PALETTES } from './render.js';
@@ -13,15 +21,14 @@ const state = {
     bundle: null,
     projection: null,
     streetGroups: null,
-    anchorDisp: null,     // { freeflow: Float32Array [dLon0, dLat0, ...], friday: same }
-    tripDisp: null,       // per trip: { freeflow: {geo, dispA, dispB}, friday: {...} }
+    anchorDisp: null,     // { [modeKey]: Float32Array [dLon0, dLat0, ...] }
+    tripDisp: null,       // per trip: { [modeKey]: {geo, disps: { [modeKey]: Float32Array }} }
     // Interaction
-    t: 0.0,               // morph 0..1
-    targetBlend: 0,       // 0 = freeflow, 1 = friday
-    currentBlend: 0,      // animated
+    t: 0.0,               // morph 0..1 (geography <-> time-space)
+    fromMode: 'freeflow', // tween start mode
+    toMode: 'freeflow',   // tween end mode (settled when currentBlend === 1)
+    currentBlend: 1,      // 0 = fromMode, 1 = toMode (settled state: 1)
     tweenStart: 0,
-    tweenFrom: 0,
-    tweenTo: 0,
     tweening: false,
     showXray: false,
     selectedTripIndex: -1,
@@ -48,7 +55,13 @@ async function boot() {
     const bundle = await response.json();
     state.bundle = bundle;
 
-    setStatus('Computing warp field for 46k streets and 908 anchors...');
+    // Bundle-driven mode set: the pipeline is the single source of truth for
+    // which scenarios exist. The default active mode is the first one.
+    const defaultMode = bundle.modes[0].key;
+    state.fromMode = defaultMode;
+    state.toMode = defaultMode;
+
+    setStatus('Computing warp field for streets and anchors...');
     // Yield once so the status text paints before the heavy precompute.
     await new Promise(r => setTimeout(r, 20));
 
@@ -68,7 +81,7 @@ async function boot() {
     setupKeyboard();
 
     // Initial UI paint (mode + stress readout).
-    applyMode('freeflow', /*instant*/ true);
+    applyMode(defaultMode, /*instant*/ true);
 
     // Resize handling.
     const ro = new ResizeObserver(() => {
@@ -100,22 +113,19 @@ function hideStatus() {
 
 function prepareAll(bundle) {
     const anchors = bundle.anchors;
-    const tposByMode = {
-        freeflow: bundle.layouts.freeflow.tpos,
-        friday: bundle.layouts.friday.tpos,
-    };
+    const modeKeys = bundle.modes.map(m => m.key);
+    const tposByMode = {};
+    for (const m of modeKeys) tposByMode[m] = bundle.layouts[m].tpos;
 
     // Anchor displacements: for anchors themselves, disp = tpos - anchor, exact.
     const nA = anchors.length;
-    const anchorDisp = {
-        freeflow: new Float32Array(nA * 2),
-        friday: new Float32Array(nA * 2),
-    };
+    const anchorDisp = {};
+    for (const m of modeKeys) anchorDisp[m] = new Float32Array(nA * 2);
     for (let i = 0; i < nA; i++) {
-        anchorDisp.freeflow[i * 2]     = tposByMode.freeflow[i][0] - anchors[i][0];
-        anchorDisp.freeflow[i * 2 + 1] = tposByMode.freeflow[i][1] - anchors[i][1];
-        anchorDisp.friday[i * 2]       = tposByMode.friday[i][0]   - anchors[i][0];
-        anchorDisp.friday[i * 2 + 1]   = tposByMode.friday[i][1]   - anchors[i][1];
+        for (const m of modeKeys) {
+            anchorDisp[m][i * 2]     = tposByMode[m][i][0] - anchors[i][0];
+            anchorDisp[m][i * 2 + 1] = tposByMode[m][i][1] - anchors[i][1];
+        }
     }
     state.anchorDisp = anchorDisp;
 
@@ -125,17 +135,20 @@ function prepareAll(bundle) {
     const streets = bundle.streets.map((s, i) => ({ cls: s.cls, pts: streetGeo[i] }));
     state.streetGroups = groupStreetsByClass(streets, streetDisp);
 
-    // Trip path displacements: each trip has TWO polylines (freeflow, friday).
-    // We precompute displacements for BOTH so a mode switch swaps which is drawn
-    // but the morph parameter t still animates that polyline smoothly.
+    // Trip path displacements: each trip has one polyline per mode. We
+    // precompute its warp field under every mode's layout so a mode switch
+    // can crossfade the polyline's shape smoothly. On mode change the trip
+    // ALSO swaps to that mode's routed path (routes differ under congestion).
     state.tripDisp = bundle.trips.map(trip => {
         const packed = {};
-        for (const modeKey of ['freeflow', 'friday']) {
+        for (const modeKey of modeKeys) {
             const path = trip.paths[modeKey];
             if (!path || path.length < 4) { packed[modeKey] = null; continue; }
             const geo = new Float32Array(path);
             const disp = precomputeDisplacements([geo], anchors, tposByMode);
-            packed[modeKey] = { geo, dispA: disp.freeflow[0], dispB: disp.friday[0] };
+            const disps = {};
+            for (const m of modeKeys) disps[m] = disp[m][0];
+            packed[modeKey] = { geo, disps };
         }
         return packed;
     });
@@ -181,18 +194,32 @@ function setupThemeToggle() {
 }
 
 function applyMode(modeKey, instant) {
-    const target = (modeKey === 'friday') ? 1 : 0;
-    if (instant) {
-        state.currentBlend = target;
-        state.targetBlend = target;
+    if (!state.bundle.modes.some(m => m.key === modeKey)) return;
+
+    // Snap the current in-flight tween to its landing point before starting a new one.
+    // Otherwise a rapid switch would compound a partial blend with a new fromMode.
+    if (state.tweening) {
+        state.fromMode = state.toMode;
+        state.currentBlend = 1;
         state.tweening = false;
-    } else if (target !== state.targetBlend) {
-        state.tweenFrom = state.currentBlend;
-        state.tweenTo = target;
-        state.tweenStart = performance.now();
-        state.targetBlend = target;
-        state.tweening = true;
     }
+
+    if (modeKey === state.toMode) {
+        // Already targeting this mode. Nothing to animate, but still refresh UI.
+    } else {
+        state.fromMode = state.toMode;
+        state.toMode = modeKey;
+        state.currentBlend = 0;
+        if (instant) {
+            state.currentBlend = 1;
+            state.fromMode = modeKey;
+            state.tweening = false;
+        } else {
+            state.tweenStart = performance.now();
+            state.tweening = true;
+        }
+    }
+
     // UI toggle state
     document.querySelectorAll('.mode-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.mode === modeKey);
@@ -238,8 +265,15 @@ function setupTripsPanel() {
 function renderTripRows() {
     const list = document.getElementById('trip-list');
     const trips = state.bundle.trips;
-    const activeMode = state.targetBlend === 1 ? 'friday' : 'freeflow';
-    const otherMode = activeMode === 'friday' ? 'freeflow' : 'friday';
+    const modes = state.bundle.modes;
+    const activeMode = state.toMode;
+    // "Other" mode for the delta chip: pick the next mode in the shipped list
+    // (wrapping), so a three-mode UI still exposes one at-a-glance comparison
+    // per row and the chip tooltip names which one.
+    const activeIdx = modes.findIndex(m => m.key === activeMode);
+    const otherMode = modes[(activeIdx + 1) % modes.length].key;
+    const otherLabel = modes[(activeIdx + 1) % modes.length].label;
+
     list.innerHTML = '';
     trips.forEach((trip, i) => {
         const row = document.createElement('button');
@@ -271,7 +305,7 @@ function renderTripRows() {
         const mins = span('trip-minutes', '');
         mins.append(span('num', activeMin.toFixed(1)), span('unit', 'min'));
         const deltaEl = span('trip-delta', `${deltaStr} min`);
-        deltaEl.title = `vs ${otherMode === 'friday' ? 'Friday 5 pm' : 'speed limits'}`;
+        deltaEl.title = `vs ${otherLabel}`;
         metrics.append(miles, mins, deltaEl);
         row.append(endpoints, metrics);
         row.addEventListener('click', () => {
@@ -301,11 +335,13 @@ function loop(now) {
     if (state.tweening) {
         const p = Math.min(1, (now - state.tweenStart) / MODE_TWEEN_MS);
         const eased = easeInOutCubic(p);
-        state.currentBlend = state.tweenFrom + (state.tweenTo - state.tweenFrom) * eased;
+        state.currentBlend = eased;
         state.needsFrame = true;
         if (p >= 1) {
             state.tweening = false;
-            state.currentBlend = state.tweenTo;
+            state.currentBlend = 1;
+            // Collapse to the settled mode so a subsequent switch tweens cleanly.
+            state.fromMode = state.toMode;
         }
     }
     if (state.needsFrame) {
@@ -323,18 +359,17 @@ function drawScene() {
     let highlighted = null;
     if (state.selectedTripIndex >= 0) {
         const packed = state.tripDisp[state.selectedTripIndex];
-        // Pick the polyline whose mode is closest to the current blend: freeflow when blend<0.5, friday otherwise.
-        // Falls back to whichever exists if one is missing.
-        const preferFriday = state.currentBlend >= 0.5;
-        highlighted = preferFriday
-            ? (packed.friday || packed.freeflow)
-            : (packed.freeflow || packed.friday);
+        // Pick the routed polyline for whichever endpoint mode is currently
+        // dominating the blend (>=0.5 -> toMode, else fromMode). Falls back to
+        // whichever exists if one is missing.
+        const preferTo = state.currentBlend >= 0.5;
+        const primary = preferTo ? state.toMode : state.fromMode;
+        const backup  = preferTo ? state.fromMode : state.toMode;
+        highlighted = packed[primary] || packed[backup] || null;
     }
 
-    // Stress values per anchor come from the target mode's array (they don't tween;
-    // the readout number tweens the display value but the per-dot radius follows the target).
-    const activeMode = state.targetBlend === 1 ? 'friday' : 'freeflow';
-    const stress = state.bundle.layouts[activeMode].stress;
+    // Stress values per anchor come from the settled/target mode.
+    const stress = state.bundle.layouts[state.toMode].stress;
 
     renderFrame(state.ctx, {
         canvas: state.canvas,
@@ -345,6 +380,8 @@ function drawScene() {
         anchorDisp: state.anchorDisp,
         stress,
         t: state.t,
+        fromMode: state.fromMode,
+        toMode: state.toMode,
         modeBlend: state.currentBlend,
         showXray: state.showXray,
         highlightedTrip: highlighted,

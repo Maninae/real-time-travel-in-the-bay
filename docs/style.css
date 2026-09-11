@@ -244,6 +244,14 @@ body {
     box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
+.mode-btn[data-mode="midday"].active {
+    /* Amber: the "biting SF surface streets" scenario, warmer than free-flow
+       but not the full rush-hour orange. */
+    color: color-mix(in srgb, var(--warm) 85%, var(--text));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warm) 22%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--warm) 5%, transparent), transparent);
+}
+
 .mode-btn[data-mode="friday"].active {
     color: var(--warm);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warm) 35%, transparent);

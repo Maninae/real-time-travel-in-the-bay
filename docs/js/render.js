@@ -4,6 +4,12 @@
 // Path2D objects (one per class); vertex loops read the cached geo + per-mode
 // displacement Float32Arrays and write only to the canvas context.
 //
+// Modes: the v2 pipeline ships three scenarios (freeflow, midday, friday). At
+// any moment the viewer is animating between exactly two of them -- `fromMode`
+// on the left of the tween and `toMode` on the right, with `modeBlend` in
+// [0, 1] doing the crossfade. Precomputed displacements live in a per-mode
+// map on each segment, and the renderer picks up the right two per frame.
+//
 // Two palettes, one per theme: night is sodium-lit freeways with glow on ink,
 // day is the printed-atlas look, persimmon highways on paper with no glow
 // (print does not glow). Same widths hierarchy, day slightly heavier to make
@@ -53,34 +59,35 @@ const TRIP_ENDPOINT_RADIUS = 5;
 const ANCHOR_BASE_RADIUS = 0.9;
 const ANCHOR_STRESS_SCALE = 22;
 
-// Group streets by class once for the render loop.
+// Group streets by class once for the render loop. Each segment carries the
+// per-mode displacement arrays (keyed by mode key) so the renderer picks up
+// `fromMode` and `toMode` at frame time.
 export function groupStreetsByClass(streets, dispByMode) {
+    const modeKeys = Object.keys(dispByMode);
     const groups = new Map();
     for (const key of ROAD_CLASS_ORDER) groups.set(key, []);
     for (let i = 0; i < streets.length; i++) {
         const s = streets[i];
         const bucket = groups.get(s.cls);
         if (!bucket) continue;   // ignore unknown class
-        bucket.push({
-            geo: s.pts,
-            dispA: dispByMode.freeflow[i],
-            dispB: dispByMode.friday[i],
-        });
+        const disps = {};
+        for (const m of modeKeys) disps[m] = dispByMode[m][i];
+        bucket.push({ geo: s.pts, disps });
     }
     return groups;
 }
 
-// Draw one class group as a single stroked Path2D.
-// `blend` tweens displacement between the freeflow (0) and friday (1) fields;
-// `t` is the morph amount from geography (0) to time-space (1).
-function drawClass(ctx, group, style, projection, t, blend) {
+// Draw one class group as a single stroked Path2D. `t` is the morph amount
+// from geography (0) to time-space (1); `fromMode`/`toMode`/`blend` selects
+// which two mode-fields are being crossfaded and how far.
+function drawClass(ctx, group, style, projection, t, fromMode, toMode, blend) {
     if (group.length === 0) return;
     const path = new Path2D();
     for (let s = 0; s < group.length; s++) {
         const seg = group[s];
         const geo = seg.geo;
-        const dA = seg.dispA;
-        const dB = seg.dispB;
+        const dA = seg.disps[fromMode];
+        const dB = seg.disps[toMode];
         const nVerts = geo.length / 2;
         let lon = geo[0];
         let lat = geo[1];
@@ -111,7 +118,7 @@ function drawClass(ctx, group, style, projection, t, blend) {
 export function renderFrame(ctx, state) {
     const {
         canvas, projection, groups, anchors, anchorDisp, stress,
-        t, modeBlend, showXray, highlightedTrip, palette,
+        t, fromMode, toMode, modeBlend, showXray, highlightedTrip, palette,
     } = state;
 
     // Clear with the theme background.
@@ -126,26 +133,26 @@ export function renderFrame(ctx, state) {
 
     // Draw road classes back-to-front.
     for (const key of ROAD_CLASS_ORDER) {
-        drawClass(ctx, groups.get(key), palette.roads[key], projection, t, modeBlend);
+        drawClass(ctx, groups.get(key), palette.roads[key], projection, t, fromMode, toMode, modeBlend);
     }
 
     // Highlighted trip on top of the road network.
     if (highlightedTrip) {
-        drawTrip(ctx, highlightedTrip, palette, projection, t, modeBlend);
+        drawTrip(ctx, highlightedTrip, palette, projection, t, fromMode, toMode, modeBlend);
     }
 
     // X-ray anchors on top of everything.
     if (showXray) {
-        drawAnchors(ctx, anchors, anchorDisp, stress, palette, projection, t, modeBlend);
+        drawAnchors(ctx, anchors, anchorDisp, stress, palette, projection, t, fromMode, toMode, modeBlend);
     }
 
     ctx.restore();
 }
 
-function drawTrip(ctx, trip, palette, projection, t, blend) {
+function drawTrip(ctx, trip, palette, projection, t, fromMode, toMode, blend) {
     const geo = trip.geo;
-    const dA = trip.dispA;
-    const dB = trip.dispB;
+    const dA = trip.disps[fromMode];
+    const dB = trip.disps[toMode];
     const nVerts = geo.length / 2;
     if (nVerts < 2) return;
 
@@ -189,14 +196,16 @@ function drawTrip(ctx, trip, palette, projection, t, blend) {
     }
 }
 
-function drawAnchors(ctx, anchors, anchorDisp, stress, palette, projection, t, blend) {
+function drawAnchors(ctx, anchors, anchorDisp, stress, palette, projection, t, fromMode, toMode, blend) {
     ctx.fillStyle = palette.anchor;
+    const dispA = anchorDisp[fromMode];
+    const dispB = anchorDisp[toMode];
     for (let i = 0; i < anchors.length; i++) {
         const lon = anchors[i][0];
         const lat = anchors[i][1];
         // For anchors themselves the "displacement" IS tpos - anchor, exact per mode.
-        const dispLon = anchorDisp.freeflow[i * 2] + (anchorDisp.friday[i * 2] - anchorDisp.freeflow[i * 2]) * blend;
-        const dispLat = anchorDisp.freeflow[i * 2 + 1] + (anchorDisp.friday[i * 2 + 1] - anchorDisp.freeflow[i * 2 + 1]) * blend;
+        const dispLon = dispA[i * 2] + (dispB[i * 2] - dispA[i * 2]) * blend;
+        const dispLat = dispA[i * 2 + 1] + (dispB[i * 2 + 1] - dispA[i * 2 + 1]) * blend;
         const x = projection.projectX(lon + t * dispLon);
         const y = projection.projectY(lat + t * dispLat);
         // Radius grows with stress: bigger dot = the fabric bent harder here.

@@ -18,7 +18,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { simplifyPolylineIndices } from "../src/geo/simplify.ts";
 import { haversineMeters } from "../src/geo/haversine.ts";
 import { buildWeightedCsr, dijkstraSeconds } from "../src/graph/dijkstra.ts";
-import { computeScenarioWeightsSeconds, type ScenarioKey } from "../src/traffic/scenario_weights.ts";
+import { computeScenarioWeightsSeconds } from "../src/traffic/scenario_weights.ts";
+import { SCENARIOS } from "../src/traffic/scenarios.ts";
 import { REGION_BBOX } from "../src/geo/region.ts";
 
 const STREET_CLASSES = new Set([
@@ -28,10 +29,11 @@ const STREET_SIMPLIFY_TOLERANCE_M = 25;
 const TRIP_SIMPLIFY_TOLERANCE_M = 60;
 const METERS_PER_MILE = 1609.34;
 
-const MODES: { key: ScenarioKey; label: string; note: string }[] = [
-  { key: "freeflow", label: "Speed limits", note: "driving at posted limits, empty roads" },
-  { key: "friday", label: "Friday 5 pm", note: "modeled rush-hour congestion (TomTom integration pending)" },
-];
+/**
+ * Scenarios shipped in the bundle. Sourced from the single scenarios.ts
+ * table so the pipeline, viewer, and validation script never disagree.
+ */
+const MODES = SCENARIOS;
 
 /** Storytelling endpoints; each snaps to its nearest anchor. */
 const PLACES: Record<string, [number, number]> = {

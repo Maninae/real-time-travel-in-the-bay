@@ -17,9 +17,10 @@ import { classicalMdsLayout } from "../src/embed/mds.ts";
 import { smacofRefine } from "../src/embed/smacof.ts";
 import { procrustesAlign } from "../src/embed/procrustes.ts";
 import { REGION_BBOX, METERS_PER_DEG_LAT, METERS_PER_DEG_LON } from "../src/geo/region.ts";
+import { SCENARIO_KEYS } from "../src/traffic/scenarios.ts";
 
 const SMACOF_MAX_ITERATIONS = 400;
-const MODES = ["freeflow", "friday"];
+const MODES = SCENARIO_KEYS;
 
 function main(): void {
   const { anchors } = JSON.parse(readFileSync("data/anchors.json", "utf8")) as {

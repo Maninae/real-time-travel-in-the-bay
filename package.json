@@ -12,6 +12,7 @@
     "route": "tsx scripts/04_route_matrix.ts",
     "embed": "tsx scripts/05_embed.ts",
     "bundle": "tsx scripts/06_bundle_viewer.ts",
+    "validate": "tsx scripts/validate_ground_truth.ts",
     "pipeline": "npm run fetch && npm run graph && npm run grid && npm run route && npm run embed && npm run bundle",
     "typecheck": "tsc --noEmit"
   },
