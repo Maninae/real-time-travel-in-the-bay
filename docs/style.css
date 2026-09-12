@@ -806,18 +806,27 @@ body {
         padding: var(--gap-4) var(--gap-4) var(--gap-3);
         gap: var(--gap-3);
     }
+    /* Stack for mobile, and put the slider directly under the map with the
+       sample trips below it. The map and trips are children of .stage while
+       the slider (.morph-bar) is a sibling of .stage, so ordering alone can't
+       interleave them; display:contents unwraps .stage so all three become
+       direct flex children of .page and share one order scale.
+       (A reviewer on iPhone flagged having to scroll past the trips to reach
+       the slider, then scroll back up to watch the map warp.) */
     .stage {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto auto;
-        flex: none;
+        display: contents;
     }
     .map-wrap {
         aspect-ratio: 1 / 1.1;
         min-height: 0;
+        order: 1;
     }
+    .morph-bar { order: 2; }
     .trips-panel {
         max-height: 320px;
+        order: 3;
     }
+    .site-footer { order: 4; }
     .masthead {
         grid-template-columns: 1fr;
         gap: var(--gap-4);
