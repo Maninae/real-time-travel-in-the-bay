@@ -19,9 +19,10 @@ The cortical homunculus draws the human body the way the brain feels it: huge ha
 
 Drag the slider and the map morphs from familiar geography to a layout where every pair of points sits as far apart as the drive between them takes, computed from the real street network. Ferry Building to Palo Alto is 34.3 miles; at posted limits it plays like 37.5 minutes, on a modeled Friday at 5pm it plays like 64.5.
 
-| Geography (day theme) | Travel time, Friday 5 pm (night theme) |
-|---|---|
-| ![The Bay Area drawn geographically as a printed day atlas, persimmon freeways on paper](assets/preview__desktop__geography.jpg) | ![The same map at night, warped so distances match Friday-evening travel times](assets/preview__desktop__t1-friday.jpg) |
+<p align="center">
+  <img src="assets/preview__desktop__geography.jpg" alt="The Bay Area drawn geographically as a printed day atlas, persimmon freeways on paper" width="820">
+  <br><sub>Before the warp: plain geography (day theme). The banner above is the same map at Friday 5 pm travel times.</sub>
+</p>
 
 ## How it works
 
