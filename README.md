@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/preview__desktop__t1-friday.jpg" alt="The same map at night, warped so distances match Friday-evening travel times" width="820">
+</p>
+
 # Real-time travel in the bay
 
 **The Bay Area redrawn so that distance means travel time.**
